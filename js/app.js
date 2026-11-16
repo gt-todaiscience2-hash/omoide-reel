@@ -750,7 +750,7 @@
       ctx.fillStyle = '#8d8073';
       ctx.font = `500 ${Math.round(Math.min(W, H) * 0.045)}px ${FONT}`;
       ctx.textAlign = 'center';
-      ctx.fillText('写真をえらぶと、ここにスライドショーが出ます', W / 2, H / 2);
+      ctx.fillText('写真を選ぶと、ここに動画が出ます', W / 2, H / 2);
       ctx.textAlign = 'start';
       return;
     }
@@ -1465,7 +1465,7 @@
 
   // ---------- イベント ----------
   el.file.addEventListener('change', () => addFiles(el.file.files));
-  // キーボードでも「写真をえらぶ」「写真をふやす」を押せるように
+  // キーボードでも「写真を選ぶ」「写真を追加」を押せるように
   for (const l of document.querySelectorAll('label[for="file"]')) {
     l.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !el.file.disabled) { e.preventDefault(); el.file.click(); } });
   }
