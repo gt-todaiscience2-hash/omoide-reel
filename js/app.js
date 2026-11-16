@@ -36,11 +36,11 @@
     send: $('send'), sendLabel: $('send-label'), sendSub: $('send-sub'),
     result: $('result'), resultTitle: $('result-title'), resultMedia: $('result-media'), resultNote: $('result-note'),
     share: $('share'), save: $('save'), resultClose: $('result-close'),
-    adjust: $('adjust'), clear: $('clear'), panel: $('panel'), chips: Array.from(document.querySelectorAll('.chip')),
+    adjust: $('adjust'), clear: $('clear'), panel: $('panel'), chips: Array.from(document.querySelectorAll('.chips[data-group] > .chip')),
     title: $('title'), count: $('count'), thumbs: $('thumbs'), sortTime: $('sort-time'), poster: $('poster')
   };
   // アレンジの選択（何も触らなければ全部おまかせ）
-  const choice = { track: 'auto', aspect: 'auto', dur: 'auto', fit: 'fill' };
+  const choice = { track: 'auto', aspect: 'auto', dur: 'auto', fit: 'fill', filter: 'none' };
   // ファイルつきの共有ができる端末（スマホ）なら「LINEに送る」、できない端末（PCなど）なら「動画を保存」
   const CAN_SHARE = !!(navigator.canShare && navigator.share);
   const ctx = el.canvas.getContext('2d', { alpha: false });
@@ -83,6 +83,8 @@
   // ---------- ふりがな（小さい子向け。右上のボタンか、URLの ?kana=1 で入る） ----------
   // 画面に出す言葉はこの表の漢字だけで書く。長いことばを先に当てる
   const KANA = [
+    ['思い出', 'おもいで'], ['色あい', 'いろあい'], ['白黒', 'しろくろ'], ['王冠', 'おうかん'], ['音符', 'おんぷ'], ['最高', 'さいこう'], ['場所', 'ばしょ'], ['同じ', 'おなじ'],
+    ['動く', 'うごく'], ['動き', 'うごき'], ['付け', 'つけ'], ['付き', 'つき'], ['星', 'ほし'], ['花', 'はな'], ['夏', 'なつ'], ['色', 'いろ'], ['右下', 'みぎした'], ['左下', 'ひだりした'], ['左上', 'ひだりうえ'], ['右上', 'みぎうえ'],
     ['修学旅行', 'しゅうがくりょこう'], ['並べ替え', 'ならべかえ'], ['送り先', 'おくりさき'], ['場面', 'ばめん'], ['編集', 'へんしゅう'], ['見せ方', 'みせかた'], ['表紙', 'ひょうし'], ['余白', 'よはく'], ['右端', 'みぎはし'], ['仕上', 'しあ'], ['送れ', 'おくれ'], ['映', 'うつ'], ['他', 'た'], ['先', 'さき'], ['中', 'なか'], ['乗', 'の'], ['一覧', 'いちらん'], ['動か', 'うごか'], ['全体', 'ぜんたい'], ['合', 'あ'], ['読み込み中', 'よみこみちゅう'], ['正方形', 'せいほうけい'], ['文化祭', 'ぶんかさい'], ['体育祭', 'たいいくさい'],
     ['誕生日', 'たんじょうび'], ['準備中', 'じゅんびちゅう'], ['読み込', 'よみこ'], ['受け取', 'うけと'], ['何枚', 'なんまい'], ['写真', 'しゃしん'], ['動画', 'どうが'],
     ['送信', 'そうしん'], ['最初', 'さいしょ'], ['全部', 'ぜんぶ'], ['変更', 'へんこう'], ['画像', 'がぞう'], ['保存', 'ほぞん'], ['再生', 'さいせい'], ['追加', 'ついか'],
@@ -403,6 +405,7 @@
   // ---------- サムネイル一覧（調整パネルの中） ----------
   function renderThumbs() {
     const n = state.photos.length;
+    for (const p of state.photos) syncThumb(p);
     setText(el.count, `${n}枚`);
     const items = state.photos.map((p, i) => {
       const li = document.createElement('li');
@@ -498,6 +501,7 @@
       if (x < el.strip.scrollLeft + 40 || x > el.strip.scrollLeft + w - 100) el.strip.scrollLeft = Math.max(0, x - w / 2 + 28);
     }
     nowIndex = i;
+    if (!el.panel.hidden && el.panel.dataset.tab === 'deco') syncDeco();
   }
 
   function makeCover(i) {
@@ -606,6 +610,438 @@
     }
   }
 
+  // ---------- 色あい（フィルター） ----------
+  // iPhoneのSafariは canvas の filter に対応していないため、写真の色そのものを変換表で塗り替える。
+  // 塗り替えは写真ごとに1回だけ（前後数枚ぶん）。再生中の負担はふえない
+  const LOOKS = Object.freeze({
+    none: null,
+    soft: { name: 'ふんわり', sat: 0.88, contrast: 0.9, gamma: 0.9, bal: [1.03, 1, 0.95], lift: 0.035, fx: { leak: 0.16, vig: 0.12 } },
+    film: { name: 'フィルム', sat: 0.76, s: 0.4, lift: 0.075, top: 0.93, bal: [1.02, 1, 0.96], add: [0, 0.006, 0.022], fx: { grain: 0.09, vig: 0.3 } },
+    memory: { name: '思い出', sat: 0.85, sepia: 0.72, contrast: 0.94, gamma: 0.96, lift: 0.04, top: 0.97, fx: { vig: 0.45 } },
+    mono: { name: '白黒', sat: 0, s: 0.32, contrast: 1.06, lift: 0.02, fx: { vig: 0.28 } },
+    summer: { name: '夏', sat: 1.2, contrast: 1.06, gamma: 0.95, bal: [0.97, 1.02, 1.06] }
+  });
+  const builtLooks = new Map();
+  function lookOf(key) {
+    const def = LOOKS[key];
+    if (!def) return null;
+    let f = builtLooks.get(key);
+    if (f) return f;
+    const [lr, lg, lb] = [0.2126, 0.7152, 0.0722];
+    const s = def.sat === undefined ? 1 : def.sat;
+    // 彩度 → セピアの順にかける 3×3 の行列
+    const S = [lr * (1 - s) + s, lg * (1 - s), lb * (1 - s), lr * (1 - s), lg * (1 - s) + s, lb * (1 - s), lr * (1 - s), lg * (1 - s), lb * (1 - s) + s];
+    const a = def.sepia || 0;
+    const SEP = [0.393, 0.769, 0.189, 0.349, 0.686, 0.168, 0.272, 0.534, 0.131];
+    const P = SEP.map((v, k) => (1 - a) * (k % 4 === 0 ? 1 : 0) + a * v);
+    const m = new Float32Array(9);
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) m[r * 3 + c] = P[r * 3] * S[c] + P[r * 3 + 1] * S[3 + c] + P[r * 3 + 2] * S[6 + c];
+    // 明るさのカーブ（色ごと）
+    const lut = [0, 1, 2].map((ch) => {
+      const t = new Uint8ClampedArray(256);
+      for (let x = 0; x < 256; x++) {
+        let y = Math.pow(x / 255, def.gamma || 1);
+        y = 0.5 + (y - 0.5) * (def.contrast || 1);
+        if (def.s) y = y * (1 - def.s) + ease(clamp(y, 0, 1)) * def.s;
+        y = y * (def.bal ? def.bal[ch] : 1) + (def.add ? def.add[ch] : 0);
+        const lo = def.lift || 0, hi = def.top || 1;
+        t[x] = Math.round(clamp(lo + y * (hi - lo), 0, 1) * 255);
+      }
+      return t;
+    });
+    f = { key, m, lut, fx: def.fx || null };
+    builtLooks.set(key, f);
+    return f;
+  }
+  function tintPixels(d, f) {
+    const m = f.m, r0 = f.lut[0], g0 = f.lut[1], b0 = f.lut[2];
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const R = m[0] * r + m[1] * g + m[2] * b, G = m[3] * r + m[4] * g + m[5] * b, B = m[6] * r + m[7] * g + m[8] * b;
+      d[i] = r0[R < 0 ? 0 : R > 255 ? 255 : R | 0];
+      d[i + 1] = g0[G < 0 ? 0 : G > 255 ? 255 : G | 0];
+      d[i + 2] = b0[B < 0 ? 0 : B > 255 ? 255 : B | 0];
+    }
+  }
+  // 小さい画像はその場で塗り替える
+  function tintCanvas(src, w, h, f) {
+    const c = makeCanvas(w, h);
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(src, 0, 0, w, h);
+    if (f) { const img = g.getImageData(0, 0, w, h); tintPixels(img.data, f); g.putImageData(img, 0, 0); }
+    return c;
+  }
+  // 大きい写真は帯に分けて少しずつ塗り替える（再生中の動きを止めない）
+  async function tintLarge(bmp, f, alive) {
+    const w = bmp.width, h = bmp.height;
+    const c = makeCanvas(w, h);
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(bmp, 0, 0);
+    const rows = Math.max(16, Math.floor(260000 / w));
+    for (let y = 0; y < h; y += rows) {
+      if (!alive()) { c.width = c.height = 0; return null; }
+      const hh = Math.min(rows, h - y);
+      const img = g.getImageData(0, y, w, hh);
+      tintPixels(img.data, f);
+      g.putImageData(img, 0, y);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    const out = await createImageBitmap(c);
+    c.width = c.height = 0;
+    return out;
+  }
+  // 写真ごとの小さい版（読み込み待ちの代わり・ぼかし背景）は色あいごとに作っておく
+  function smallOf(photo) {
+    const key = choice.filter;
+    if (!LOOKS[key]) return { tiny: photo.tiny, bg: photo.bg };
+    if (!photo.looks) photo.looks = {};
+    let v = photo.looks[key];
+    if (!v) {
+      const f = lookOf(key);
+      v = photo.looks[key] = {
+        tiny: tintCanvas(photo.tiny, photo.tiny.width, photo.tiny.height, f),
+        bg: photo.bg ? tintCanvas(photo.bg, photo.bg.width, photo.bg.height, f) : null
+      };
+    }
+    return v;
+  }
+  // 一覧の小さい写真も同じ色あいにそろえる
+  function syncThumb(photo) {
+    if (photo.thumbKey === choice.filter) return;
+    if (!photo.thumb0) photo.thumb0 = tintCanvas(photo.thumb, photo.thumb.width, photo.thumb.height, null);
+    const g = photo.thumb.getContext('2d');
+    const f = lookOf(choice.filter);
+    g.drawImage(f ? tintCanvas(photo.thumb0, photo.thumb0.width, photo.thumb0.height, f) : photo.thumb0, 0, 0);
+    photo.thumbKey = choice.filter;
+  }
+
+  // 色あいに付く「重ねる効果」（周辺を暗く・やわらかい光・フィルムの粒）。どれも毎コマ描いても軽い
+  const overlay = { vig: null, grain: null, grainPat: null };
+  function vignette() {
+    if (overlay.vig) return overlay.vig;
+    const c = makeCanvas(128, 128), g = c.getContext('2d');
+    const gr = g.createRadialGradient(64, 64, 30, 64, 64, 92);
+    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(0.55, 'rgba(0,0,0,0.35)'); gr.addColorStop(1, 'rgba(0,0,0,1)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    return (overlay.vig = c);
+  }
+  function grainPattern() {
+    if (overlay.grainPat) return overlay.grainPat;
+    const c = makeCanvas(160, 160), g = c.getContext('2d');
+    const img = g.createImageData(160, 160), d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const v = hash01(i * 7 + 3) < 0.5 ? 0 : 255;
+      d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = Math.round(hash01(i + 11) * 255);
+    }
+    g.putImageData(img, 0, 0);
+    overlay.grain = c;
+    return (overlay.grainPat = ctx.createPattern(c, 'repeat'));
+  }
+  function drawLook(t, W, H) {
+    const f = lookOf(choice.filter);
+    if (!f || !f.fx) return;
+    const fx = f.fx;
+    ctx.save();
+    if (fx.leak) {
+      // 左上からさしこむ、あたたかい光。ごくゆっくり動く
+      const x = W * (0.12 + 0.06 * Math.sin(t * 0.35)), y = H * (0.08 + 0.05 * Math.cos(t * 0.27)), r = Math.max(W, H) * 0.7;
+      const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, `rgba(255,214,170,${fx.leak})`); gr.addColorStop(1, 'rgba(255,214,170,0)');
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    if (fx.vig) { ctx.globalAlpha = fx.vig; ctx.drawImage(vignette(), -W * 0.04, -H * 0.04, W * 1.08, H * 1.08); }
+    if (fx.grain) {
+      const pat = grainPattern();
+      const k = Math.max(1.5, Math.min(W, H) / 700), shift = (Math.floor(t * 12) * 53) % 160;
+      ctx.globalAlpha = fx.grain;
+      ctx.setTransform(k, 0, 0, k, -shift * k, -((shift * 3) % 160) * k);
+      ctx.fillStyle = pat; ctx.fillRect(0, 0, W / k + 320, H / k + 320);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  // ---------- かざり（スタンプ・動くかざり・ひとこと） ----------
+  // 絵はすべてこのファイルの中で線と色から描く（外から画像を読みこまない・どの端末でも同じ見た目）
+  const STAMPS = [
+    { k: 'heart', name: 'ハート' }, { k: 'smile', name: 'にこにこ' }, { k: 'laugh', name: '大わらい' }, { k: 'wow', name: 'びっくり' },
+    { k: 'star', name: '星' }, { k: 'kira', name: 'キラキラ' }, { k: 'flower', name: '花' }, { k: 'crown', name: '王冠' },
+    { k: 'note', name: '音符' }, { k: 'best', name: '最高！', text: '最高！', color: '#e2546c' },
+    { k: 'thanks', name: 'ありがとう', text: 'ありがとう', color: '#3f7fd0' }, { k: 'yay', name: 'おめでとう', text: 'おめでとう', color: '#e58a1f' }
+  ];
+  const STAMP = Object.fromEntries(STAMPS.map((s) => [s.k, s]));
+  for (const s of STAMPS) if (s.text) { s.w = 34 + 34 * s.text.length; s.h = 58; }
+  const POS = ['br', 'bl', 'tl', 'tr'];
+  const POS_NAME = { br: '右下', bl: '左下', tl: '左上', tr: '右上' };
+  const MOVES = [{ k: 'none', name: 'なし' }, { k: 'hearts', name: 'ハート' }, { k: 'kira', name: 'キラキラ' }, { k: 'petals', name: '花びら' }];
+  // 毎回同じ値になる乱数（再生と録画で動きがずれないように）
+  function hash01(a) {
+    let t = (a * 2654435761) >>> 0;
+    t ^= t >>> 15; t = Math.imul(t, 2246822519) >>> 0;
+    t ^= t >>> 13; t = Math.imul(t, 3266489917) >>> 0;
+    t ^= t >>> 16;
+    return (t >>> 0) / 4294967296;
+  }
+  const backOut = (u) => { const c1 = 1.5, c3 = c1 + 1; return 1 + c3 * Math.pow(u - 1, 3) + c1 * Math.pow(u - 1, 2); };
+  const decoOf = (p) => p.deco || (p.deco = { stamp: null, pos: 'br', move: 'none', say: '' });
+  const hasDeco = (p) => !!(p.deco && (p.deco.stamp || p.deco.move !== 'none' || p.deco.say));
+
+  // 白いふちどり＋うすい影（シール風）。u は 1単位あたりのピクセル数
+  function rim(g, path, u, w) {
+    g.save();
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    g.strokeStyle = '#fff'; g.lineWidth = w || 11;
+    g.shadowColor = 'rgba(0,0,0,0.3)'; g.shadowBlur = 7 * u; g.shadowOffsetY = 2.5 * u;
+    g.stroke(path);
+    g.restore();
+  }
+  const ell = (p, x, y, rx, ry, rot) => { p.moveTo(x + rx * Math.cos(rot || 0), y + rx * Math.sin(rot || 0)); p.ellipse(x, y, rx, ry, rot || 0, 0, Math.PI * 2); };
+  function starPath(p, cx, cy, R, r, n, rot) {
+    for (let k = 0; k < n * 2; k++) {
+      const a = (rot || -Math.PI / 2) + (k * Math.PI) / n, rr = k % 2 ? r : R;
+      const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+      if (k) p.lineTo(x, y); else p.moveTo(x, y);
+    }
+    p.closePath();
+  }
+  function face(g, u) {
+    const p = new Path2D(); ell(p, 50, 50, 41, 41);
+    rim(g, p, u); g.fillStyle = '#ffcd3c'; g.fill(p);
+    g.fillStyle = 'rgba(255,255,255,0.35)'; g.beginPath(); g.ellipse(36, 26, 11, 6, -0.5, 0, Math.PI * 2); g.fill();
+  }
+  // 1つのスタンプを 100×100（文字のスタンプは横長）の単位で描く
+  function paintStamp(g, k, u) {
+    const dark = '#4a3426';
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    switch (k) {
+      case 'heart': {
+        const p = new Path2D('M50 88C24 70 7 53 9 33 11 15 31 7 43 16 46 19 48 22 50 26 52 22 54 19 57 16 69 7 89 15 91 33 93 53 76 70 50 88Z');
+        rim(g, p, u); g.fillStyle = '#ef5a74'; g.fill(p);
+        g.fillStyle = 'rgba(255,255,255,0.55)'; g.beginPath(); g.ellipse(27, 30, 8, 4.5, -0.7, 0, Math.PI * 2); g.fill();
+        break;
+      }
+      case 'smile': {
+        face(g, u);
+        g.fillStyle = dark; g.beginPath(); g.ellipse(37, 43, 4.5, 7, 0, 0, Math.PI * 2); g.ellipse(63, 43, 4.5, 7, 0, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = dark; g.lineWidth = 5.5; g.beginPath(); g.arc(50, 52, 19, 0.18 * Math.PI, 0.82 * Math.PI); g.stroke();
+        g.fillStyle = 'rgba(240,100,100,0.45)'; g.beginPath(); g.arc(26, 60, 6.5, 0, Math.PI * 2); g.arc(74, 60, 6.5, 0, Math.PI * 2); g.fill();
+        break;
+      }
+      case 'laugh': {
+        face(g, u);
+        g.strokeStyle = dark; g.lineWidth = 5.5;
+        g.beginPath(); g.moveTo(29, 45); g.quadraticCurveTo(36, 34, 43, 45); g.moveTo(57, 45); g.quadraticCurveTo(64, 34, 71, 45); g.stroke();
+        const m = new Path2D('M28 55H72C70 74 61 82 50 82 39 82 30 74 28 55Z');
+        g.fillStyle = '#7a2e2e'; g.fill(m);
+        g.save(); g.clip(m); g.fillStyle = '#ef6f6f'; g.beginPath(); g.ellipse(50, 80, 13, 8, 0, 0, Math.PI * 2); g.fill(); g.restore();
+        g.fillStyle = '#fff'; g.fillRect(33, 55, 34, 5);
+        const tear = new Path2D('M14 46C10 54 9 58 13 61 17 64 21 60 20 56 19 53 16 50 14 46ZM86 46C90 54 91 58 87 61 83 64 79 60 80 56 81 53 84 50 86 46Z');
+        g.fillStyle = '#7cc6f2'; g.fill(tear);
+        break;
+      }
+      case 'wow': {
+        face(g, u);
+        g.fillStyle = dark; g.beginPath(); g.arc(37, 44, 6, 0, Math.PI * 2); g.arc(63, 44, 6, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = dark; g.lineWidth = 4.5; g.beginPath(); g.arc(37, 36, 10, 1.2 * Math.PI, 1.8 * Math.PI); g.moveTo(55, 30); g.arc(63, 36, 10, 1.2 * Math.PI, 1.8 * Math.PI); g.stroke();
+        g.fillStyle = '#7a2e2e'; g.beginPath(); g.ellipse(50, 67, 8, 10.5, 0, 0, Math.PI * 2); g.fill();
+        break;
+      }
+      case 'star': {
+        const p = new Path2D(); starPath(p, 50, 54, 46, 20, 5);
+        rim(g, p, u, 12); g.fillStyle = '#ffc928'; g.fill(p);
+        g.fillStyle = 'rgba(255,255,255,0.5)'; g.beginPath(); g.ellipse(40, 40, 7, 4, -0.6, 0, Math.PI * 2); g.fill();
+        break;
+      }
+      case 'kira': {
+        const p = new Path2D();
+        starPath(p, 40, 58, 38, 9, 4); starPath(p, 77, 24, 19, 5, 4); starPath(p, 80, 77, 13, 3.5, 4);
+        rim(g, p, u, 10); g.fillStyle = '#ffd34a'; g.fill(p);
+        g.fillStyle = '#fff8d8'; g.beginPath(); g.arc(40, 58, 6, 0, Math.PI * 2); g.fill();
+        break;
+      }
+      case 'flower': {
+        const p = new Path2D();
+        for (let k = 0; k < 5; k++) { const a = -Math.PI / 2 + (k * 2 * Math.PI) / 5; ell(p, 50 + Math.cos(a) * 24, 50 + Math.sin(a) * 24, 19, 19); }
+        rim(g, p, u); g.fillStyle = '#f59fbc'; g.fill(p);
+        g.fillStyle = '#ffd34d'; g.beginPath(); g.arc(50, 50, 14, 0, Math.PI * 2); g.fill();
+        g.fillStyle = 'rgba(255,255,255,0.5)'; g.beginPath(); g.arc(45, 45, 4, 0, Math.PI * 2); g.fill();
+        break;
+      }
+      case 'crown': {
+        const p = new Path2D('M14 78L18 30 36 50 50 20 64 50 82 30 86 78Z');
+        ell(p, 18, 27, 6, 6); ell(p, 50, 17, 6.5, 6.5); ell(p, 82, 27, 6, 6);
+        rim(g, p, u); g.fillStyle = '#f8c73a'; g.fill(p);
+        g.fillStyle = '#e8a91c'; g.fillRect(14, 68, 72, 10);
+        g.fillStyle = '#e9546b'; g.beginPath(); g.arc(50, 56, 6.5, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#4a90d9'; g.beginPath(); g.arc(31, 60, 4.5, 0, Math.PI * 2); g.arc(69, 60, 4.5, 0, Math.PI * 2); g.fill();
+        break;
+      }
+      case 'note': {
+        const p = new Path2D();
+        ell(p, 30, 76, 14, 10, -0.4); ell(p, 70, 68, 14, 10, -0.4);
+        p.rect(39, 22, 6, 54); p.rect(79, 14, 6, 54);
+        p.moveTo(39, 22); p.lineTo(85, 12); p.lineTo(85, 26); p.lineTo(39, 36); p.closePath();
+        rim(g, p, u, 12); g.fillStyle = '#5b7bd6'; g.fill(p);
+        break;
+      }
+      default: {
+        const s = STAMP[k];
+        if (!s || !s.text) break;
+        const w = s.w, h = s.h;
+        const p = new Path2D();
+        const r = h / 2;
+        p.moveTo(r, 0); p.lineTo(w - r, 0); p.arc(w - r, r, r, -Math.PI / 2, Math.PI / 2); p.lineTo(r, h); p.arc(r, r, r, Math.PI / 2, Math.PI * 1.5); p.closePath();
+        rim(g, p, u, 10); g.fillStyle = s.color; g.fill(p);
+        g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.font = `800 34px ${FONT}`;
+        g.fillText(s.text, w / 2, h / 2 + 1.5, w - 26);
+      }
+    }
+  }
+  // 動くかざりの小さい絵
+  function paintBit(g, k) {
+    if (k === 'hearts') {
+      const p = new Path2D('M50 88C24 70 7 53 9 33 11 15 31 7 43 16 46 19 48 22 50 26 52 22 54 19 57 16 69 7 89 15 91 33 93 53 76 70 50 88Z');
+      g.fillStyle = '#ff7d96'; g.fill(p);
+      g.fillStyle = 'rgba(255,255,255,0.5)'; g.beginPath(); g.ellipse(28, 30, 9, 5, -0.7, 0, Math.PI * 2); g.fill();
+    } else if (k === 'kira') {
+      const gr = g.createRadialGradient(50, 50, 0, 50, 50, 48);
+      gr.addColorStop(0, 'rgba(255,250,220,0.9)'); gr.addColorStop(1, 'rgba(255,240,180,0)');
+      g.fillStyle = gr; g.fillRect(0, 0, 100, 100);
+      const p = new Path2D(); starPath(p, 50, 50, 46, 7, 4);
+      g.fillStyle = '#fffbe6'; g.fill(p);
+    } else {
+      const p = new Path2D('M50 6C72 22 80 52 66 78 60 89 50 94 50 94 50 94 40 89 34 78 20 52 28 22 50 6Z');
+      g.fillStyle = '#ffc4d4'; g.fill(p);
+      g.strokeStyle = 'rgba(230,120,150,0.5)'; g.lineWidth = 3; g.beginPath(); g.moveTo(50, 20); g.lineTo(50, 82); g.stroke();
+    }
+  }
+  // 描いた絵は大きさごとに取っておき、毎コマ描き直さない
+  const sprites = new Map();
+  function sprite(kind, k, px) {
+    px = Math.max(8, Math.round(px));
+    const key = `${kind}:${k}:${px}`;
+    let c = sprites.get(key);
+    if (c) return c;
+    const s = kind === 'stamp' ? STAMP[k] : null;
+    const wu = (s && s.w) || 100, hu = (s && s.h) || 100, pad = kind === 'stamp' ? 12 : 0, u = px / 100;
+    c = makeCanvas(Math.ceil((wu + pad * 2) * u), Math.ceil((hu + pad * 2) * u));
+    const g = c.getContext('2d');
+    g.scale(u, u); g.translate(pad, pad);
+    if (kind === 'stamp') paintStamp(g, k, u); else paintBit(g, k);
+    if (sprites.size > 120) sprites.clear();
+    sprites.set(key, c);
+    return c;
+  }
+
+  // スタンプの場所：画面の短い辺を基準にするので、横・縦・正方形のどれでもはみ出さない
+  function stampSpot(photo, i, W, H, s) {
+    const d = photo.deco, def = STAMP[d.stamp];
+    const base = Math.min(W, H), S = base * 0.22;
+    const w = ((def.w || 100) / 100) * S, h = ((def.h || 100) / 100) * S, m = base * 0.07;
+    const titled = i === 0 && (s.title || s.subtitle);
+    const cx = d.pos[1] === 'l' ? m + w / 2 : W - m - w / 2;
+    const cy = d.pos[0] === 't' ? m + h / 2 : H - m - h / 2 - (titled ? base * 0.3 : 0);
+    return { cx, cy, S };
+  }
+
+  // local：その写真が出はじめてからの秒数。still：止めているとき（全部出た状態で見せる）
+  function drawDeco(i, local, alpha, W, H, s, still) {
+    const photo = state.photos[i];
+    if (!photo || !hasDeco(photo) || alpha <= 0.01) return;
+    const d = photo.deco, base = Math.min(W, H), span = s.dur + Math.min(0.9, s.dur * 0.3);
+    ctx.save();
+    // 動くかざり（写真の上・スタンプの下）
+    if (d.move !== 'none') drawMove(photo, d.move, still ? span * 0.42 : local, span, alpha, W, H, base);
+    // スタンプ：0.3秒後にポンと出て、かすかにゆれる
+    if (d.stamp && STAMP[d.stamp]) {
+      const { cx, cy, S } = stampSpot(photo, i, W, H, s);
+      const u = still ? 1 : clamp((local - 0.3) / 0.45, 0, 1);
+      if (u > 0) {
+        const kIdx = STAMPS.indexOf(STAMP[d.stamp]);
+        const rot = ((hash01(photo.id * 31 + kIdx) - 0.5) * 16 + (still ? 0 : Math.sin(local * 2.4) * 1.6)) * Math.PI / 180;
+        const sc = backOut(u);
+        const spr = sprite('stamp', d.stamp, S);
+        ctx.globalAlpha = alpha * clamp(u * 3, 0, 1);
+        ctx.translate(cx, cy); ctx.rotate(rot); ctx.scale(sc, sc);
+        ctx.drawImage(spr, -spr.width / 2, -spr.height / 2);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      }
+    }
+    if (d.say) drawSay(photo, i, d, still ? 1 : clamp((local - 0.55) / 0.4, 0, 1), alpha, W, H, s, base);
+    ctx.restore();
+  }
+
+  function drawMove(photo, kind, L, span, alpha, W, H, base) {
+    const k = clamp(span / 3.6, 0.6, 1.4);
+    const seed = photo.id * 101 + (kind === 'hearts' ? 1 : kind === 'kira' ? 2 : 3);
+    const r = (j, n) => hash01(seed * 977 + j * 13 + n);
+    if (kind === 'hearts') {
+      for (let j = 0; j < 11; j++) {
+        const start = 0.25 * k + r(j, 1) * 1.5 * k, dur = 2.3 * k, u = (L - start) / dur;
+        if (u <= 0 || u >= 1) continue;
+        const size = base * (0.055 + 0.04 * r(j, 2));
+        const x = W * (0.1 + 0.8 * r(j, 3)) + Math.sin(u * 5 + j) * base * 0.03;
+        const y = H * 1.04 - u * H * (0.55 + 0.3 * r(j, 4));
+        const a = clamp(Math.min(u / 0.12, (1 - u) / 0.3), 0, 1) * 0.9;
+        put(sprite('bit', 'hearts', size), x, y, Math.sin(u * 4 + j) * 0.25, 0.8 + 0.25 * u, a * alpha);
+      }
+    } else if (kind === 'kira') {
+      for (let j = 0; j < 16; j++) {
+        const start = 0.2 * k + r(j, 1) * 2.4 * k, dur = 0.9 * k, u = (L - start) / dur;
+        if (u <= 0 || u >= 1) continue;
+        const size = base * (0.07 + 0.07 * r(j, 2));
+        const x = W * (0.06 + 0.88 * r(j, 3)), y = H * (0.06 + 0.88 * r(j, 4));
+        put(sprite('bit', 'kira', size), x, y, u * 1.2, Math.sin(u * Math.PI), alpha);
+      }
+    } else {
+      for (let j = 0; j < 18; j++) {
+        const start = r(j, 1) * 1.6 * k, dur = 3 * k, u = (L - start) / dur;
+        if (u <= 0 || u >= 1) continue;
+        const size = base * (0.034 + 0.026 * r(j, 2));
+        const x = W * (-0.05 + 0.95 * r(j, 3)) + u * W * 0.18 + Math.sin(u * 6 + j) * base * 0.04;
+        const y = -H * 0.06 + u * H * 1.12;
+        const a = clamp(Math.min(u / 0.1, (1 - u) / 0.15), 0, 1) * 0.92;
+        put(sprite('bit', 'petals', size), x, y, u * 5 * (r(j, 4) < 0.5 ? 1 : -1) + j, 1, a * alpha);
+      }
+    }
+  }
+  function put(spr, x, y, rot, sc, a) {
+    if (sc <= 0 || a <= 0) return;
+    ctx.globalAlpha = a;
+    ctx.translate(x, y); ctx.rotate(rot); ctx.scale(sc, sc);
+    ctx.drawImage(spr, -spr.width / 2, -spr.height / 2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  // ひとこと：白い吹き出し。スタンプと重ならない上の角に出す
+  function drawSay(photo, i, d, u, alpha, W, H, s, base) {
+    if (u <= 0) return;
+    const fs = base * 0.058;
+    ctx.font = `800 ${Math.round(fs)}px ${FONT}`;
+    const tw = Math.min(ctx.measureText(d.say).width, W * 0.66);
+    const padX = fs * 0.75, bw = tw + padX * 2, bh = fs * 1.75, m = base * 0.07;
+    const left = !(d.stamp && d.pos === 'tl');
+    const x = left ? m : W - m - bw, y = m;
+    const ax = left ? x + bh * 0.9 : x + bw - bh * 0.9, ay = y + bh;
+    ctx.save();
+    ctx.globalAlpha = alpha * clamp(u * 3, 0, 1);
+    const sc = backOut(u);
+    ctx.translate(ax, ay); ctx.scale(sc, sc); ctx.translate(-ax, -ay);
+    const r = bh / 2, p = new Path2D();
+    p.moveTo(x + r, y); p.lineTo(x + bw - r, y); p.arc(x + bw - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+    p.lineTo(ax + fs * 0.35, y + bh); p.lineTo(ax - (left ? fs * 0.25 : -fs * 0.25), y + bh + fs * 0.55); p.lineTo(ax - fs * 0.35, y + bh);
+    p.lineTo(x + r, y + bh); p.arc(x + r, y + r, r, Math.PI / 2, Math.PI * 1.5); p.closePath();
+    ctx.shadowColor = 'rgba(0,0,0,0.28)'; ctx.shadowBlur = base * 0.02; ctx.shadowOffsetY = base * 0.005;
+    ctx.fillStyle = 'rgba(255,255,255,0.96)'; ctx.fill(p);
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = '#1d2433'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(d.say, x + padX, y + bh / 2 + fs * 0.04, tw);
+    ctx.restore();
+  }
+
   // ---------- 描画 ----------
   function drawCover(c, src, sw, sh, x, y, w, h) {
     const k = Math.max(w / sw, h / sh);
@@ -619,10 +1055,15 @@
     const p = state.photos[i];
     if (!p) return Promise.resolve();
     let e = cache.get(p.id);
+    if (e && e.look !== choice.filter) { dropCache(p.id); e = null; } // 色あいを変えたら作り直す
     if (!e) {
-      e = { bmp: null, promise: null };
-      e.promise = createImageBitmap(p.blob).then((b) => {
-        if (cache.get(p.id) === e) { e.bmp = b; if (!state.playing) draw(state.pos); } else b.close();
+      e = { bmp: null, promise: null, look: choice.filter };
+      const f = lookOf(choice.filter);
+      const alive = () => cache.get(p.id) === e;
+      e.promise = createImageBitmap(p.blob).then(async (b) => {
+        if (f && alive()) { const t = await tintLarge(b, f, alive); b.close(); b = t; }
+        if (!b) return;
+        if (alive()) { e.bmp = b; if (!state.playing) draw(state.pos); } else b.close();
       }).catch(() => {});
       cache.set(p.id, e);
     }
@@ -641,7 +1082,8 @@
     const photo = state.photos[i];
     if (!photo || alpha <= 0) return;
     const e = cache.get(photo.id);
-    const src = e && e.bmp ? e.bmp : photo.tiny;
+    const small = smallOf(photo);
+    const src = e && e.bmp ? e.bmp : small.tiny;
     const sw = src.width, sh = src.height;
     const ar = photo.w / photo.h, far = W / H;
     const loss = 1 - Math.min(ar, far) / Math.max(ar, far);
@@ -673,7 +1115,7 @@
       ctx.drawImage(src, (W - sw * k) / 2 + dx, (H - sh * k) / 2 + dy, sw * k, sh * k);
     } else {
       // 縦横比が合わない写真は切らずに、ぼかした同じ写真を背景に敷く
-      const t = photo.bg || photo.tiny;
+      const t = small.bg || small.tiny;
       const bk = Math.max(W / t.width, H / t.height) * 1.3;
       ctx.drawImage(t, (W - t.width * bk) / 2, (H - t.height * bk) / 2, t.width * bk, t.height * bk);
       const z = 0.9 + 0.05 * (zin ? q : 1 - q);
@@ -763,8 +1205,14 @@
     const keep = new Set();
     for (let j = i - 1; j <= i + 2; j++) if (state.photos[j]) { keep.add(state.photos[j].id); want(j); }
     trimCache(keep);
-    if (i > 0 && local < X) drawSlide(i - 1, (local + D) / (D + X), 1, W, H);
-    drawSlide(i, local / (D + X), i > 0 ? clamp(local / X, 0, 1) : (state.playing ? clamp(t / 0.5, 0, 1) : 1), W, H);
+    // 止めているときは、切りかわりの途中ではなく、その写真だけを見せる
+    const still = !state.playing;
+    const fadeIn = i > 0 ? (still ? 1 : clamp(local / X, 0, 1)) : (state.playing ? clamp(t / 0.5, 0, 1) : 1);
+    if (i > 0 && fadeIn < 1) drawSlide(i - 1, (local + D) / (D + X), 1, W, H);
+    drawSlide(i, local / (D + X), fadeIn, W, H);
+    drawLook(t, W, H);
+    if (i > 0 && fadeIn < 1) drawDeco(i - 1, local + D, 1 - fadeIn, W, H, s, false);
+    drawDeco(i, local, fadeIn, W, H, s, still);
     drawTitle(t, W, H, s);
     const end = clamp((t - (T - 1.2)) / 1.2, 0, 1);
     if (end > 0) { ctx.fillStyle = `rgba(13,11,10,${end})`; ctx.fillRect(0, 0, W, H); }
@@ -842,9 +1290,11 @@
 
   // ---------- 再生（0秒から始めるときは同時に録画する） ----------
   let raf = 0, playToken = 0;
+  let previewEnd = 0; // かざりの見本を見せるとき：この時刻で止める
 
   async function play(from, opts) {
     opts = opts || {};
+    previewEnd = opts.until || 0;
     if (!state.photos.length || state.loading) return false;
     const token = ++playToken;
     const s = settings();
@@ -919,12 +1369,22 @@
         meter.done = true;
         if (meter.n < 36 && !document.hidden) {
           state.light = true;
-          stop(); invalidate();
-          state.pos = 0; refresh();
-          play(0);
-          return;
+          // かざりの見本を見せている途中なら、サイズだけ切りかえてそのまま続ける
+          if (previewEnd) refresh();
+          else {
+            stop(); invalidate();
+            state.pos = 0; refresh();
+            play(0);
+            return;
+          }
         }
       }
+    }
+    if (previewEnd && t >= previewEnd) {
+      previewEnd = 0;
+      stop();
+      refresh();
+      return;
     }
     if (t >= T) {
       draw(T);
@@ -1053,6 +1513,7 @@
     $('drop-now').hidden = state.playing || state.photos.length < 2 || busy;
     $('mute').hidden = !has || !settings().track;
     renderChips();
+    if (!state.playing) paintSwatches();
     if (!state.playing) setText(el.time, stoppedLabel());
     updateSend(state.playing ? clock() : state.pos, totalTime());
   }
@@ -1296,7 +1757,10 @@
             p.shadowColor = 'rgba(43,38,34,0.22)'; p.shadowBlur = 18; p.shadowOffsetY = 6;
             p.fillStyle = '#fff'; p.fillRect(x, y, cw, rh);
             p.restore();
-            drawCover(p, bmp, bmp.width, bmp.height, x + 10, y + 10, cw - 20, rh - 20);
+            const f = lookOf(choice.filter);
+            const img = f ? tintCanvas(bmp, bmp.width, bmp.height, f) : bmp;
+            drawCover(p, img, img.width, img.height, x + 10, y + 10, cw - 20, rh - 20);
+            if (img !== bmp) img.width = img.height = 0;
           } finally { bmp.close(); }
         }
         y += rh + gap;
@@ -1510,7 +1974,8 @@
     clearErrors();
     hint('');
     el.title.value = ''; $('title-clear').hidden = true;
-    choice.track = choice.aspect = choice.dur = 'auto'; choice.fit = 'fill';
+    choice.track = choice.aspect = choice.dur = 'auto'; choice.fit = 'fill'; choice.filter = 'none';
+    lastStrip = null;
     setPanel(false);
     photosChanged();
   });
@@ -1523,7 +1988,7 @@
     el.adjust.setAttribute('aria-expanded', String(open));
     syncEditButton();
     el.bigPlay.hidden = state.playing || !state.photos.length || open;
-    if (open) { closeResult(); showNowInList(); }
+    if (open) { closeResult(); showNowInList(); syncDeco(); }
     layout();
   }
   // 編集ボタン：何が変えられるか（いまの曲）を小さく出す
@@ -1544,6 +2009,7 @@
     for (const t of el.panel.querySelectorAll('.tab')) t.setAttribute('aria-selected', String(t.dataset.tab === name));
     el.panel.scrollTop = 0;
     if (name === 'photos') showNowInList();
+    if (name === 'deco') syncDeco();
   }
   for (const t of el.panel.querySelectorAll('.tab')) t.addEventListener('click', () => setTab(t.dataset.tab));
   el.adjust.addEventListener('click', () => setPanel(el.panel.hidden));
@@ -1570,8 +2036,10 @@
     c.addEventListener('click', () => {
       const group = c.parentElement.dataset.group;
       if (!Object.hasOwn(choice, group) || state.exporting) return;
+      if (group === 'filter' && choice.filter === c.dataset.value) return;
       choice[group] = c.dataset.value;
       buzz(8);
+      if (group === 'filter') { applyLook(); return; }
       rearranged();
       if (group === 'track' && c.dataset.value === 'none') hint('音のない動画になります');
     });
@@ -1613,6 +2081,185 @@
   el.title.addEventListener('input', () => { syncTitleClear(); syncIdeas(); });
   titleClear.addEventListener('click', () => { el.title.value = ''; syncTitleClear(); rearranged(); });
   el.title.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.title.blur(); });
+
+  // ---------- かざりタブ ----------
+  // 色あいを変えたら：一覧の写真も塗り替え、最初の2枚の準備ができてから再生（=動画も作り直す）
+  async function applyLook() {
+    stop(); invalidate(); hint('');
+    renderThumbs();
+    paintSwatches();
+    state.pos = 0; refresh();
+    await within(Promise.all([want(0), want(1)]), 2500);
+    play(0);
+  }
+  // 色あいの見本：いま映っている写真で、それぞれの色あいを小さく見せる
+  function paintSwatches() {
+    if (el.panel.hidden || el.panel.dataset.tab !== 'deco') return;
+    const p = state.photos[currentIndex()];
+    if (!p) return;
+    if (!p.thumb0) syncThumb(p);
+    const src = p.thumb0 || p.thumb;
+    for (const b of el.panel.querySelectorAll('.chip.look')) {
+      const c = b.querySelector('canvas');
+      const key = `${p.id}:${b.dataset.value}`;
+      if (c.dataset.key === key) continue;
+      const tmp = tintCanvas(src, src.width, src.height, lookOf(b.dataset.value));
+      drawCover(c.getContext('2d'), tmp, tmp.width, tmp.height, 0, 0, c.width, c.height);
+      tmp.width = tmp.height = 0;
+      c.dataset.key = key;
+    }
+  }
+  // スタンプのボタン（絵は動画と同じものを小さく描く）
+  const stampBtns = STAMPS.map((s) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = s.text ? 'stamp wide' : 'stamp'; b.dataset.k = s.k;
+    b.setAttribute('aria-label', s.name);
+    b.setAttribute('aria-pressed', 'false');
+    const spr = sprite('stamp', s.k, s.text ? 104 : 88); // 2倍で描いて半分の大きさで見せる（くっきり）
+    const c = makeCanvas(spr.width, spr.height);
+    c.getContext('2d').drawImage(spr, 0, 0);
+    c.style.width = `${spr.width / 2}px`;
+    c.setAttribute('aria-hidden', 'true');
+    b.append(c);
+    b.addEventListener('click', () => tapStamp(s.k));
+    return b;
+  });
+  const stampOff = document.createElement('button');
+  stampOff.type = 'button'; stampOff.className = 'stamp off';
+  setText(stampOff, 'なし');
+  stampOff.setAttribute('aria-label', 'スタンプを外す');
+  stampOff.addEventListener('click', () => editDeco((d) => { d.stamp = null; }, 'スタンプを外しました'));
+  $('stamps').replaceChildren(stampOff, ...stampBtns);
+  const moveBtns = MOVES.map((m) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.dataset.k = m.k;
+    setText(b, m.name);
+    b.addEventListener('click', () => editDeco((d) => { d.move = m.k; }, m.k === 'none' ? '動くかざりを外しました' : `「${m.name}」を付けました`, m.k !== 'none'));
+    return b;
+  });
+  $('moves').replaceChildren(...moveBtns);
+  const SAYS = ['最高！', 'また行こう！', 'おつかれ！', 'なつかしい', 'ありがとう', 'たのしかった'];
+  $('say-ideas').replaceChildren(...SAYS.map((w) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'idea'; b.dataset.w = w;
+    setText(b, w);
+    b.addEventListener('click', () => {
+      const d = state.photos[currentIndex()] && decoOf(state.photos[currentIndex()]);
+      const next = d && d.say === w ? '' : w; // もう一度押すと消える
+      $('say').value = next;
+      editDeco((dd) => { dd.say = next; }, next ? 'ひとことを付けました' : 'ひとことを消しました', !!next);
+    });
+    return b;
+  }));
+
+  // いまの写真のかざりを変える。止めてその写真を見せ、動きつきなら少しだけ再生して見せる
+  let lastStrip = null; // 「全部外す」の直前の状態（元に戻す用）
+  function editDeco(fn, msg, preview) {
+    if (state.exporting || state.loading || !state.photos.length) return;
+    const i = currentIndex(), p = state.photos[i];
+    stop(); invalidate();
+    fn(decoOf(p));
+    buzz(8);
+    const D = settings().dur;
+    state.pos = i * D + 0.02;
+    refresh();
+    syncDeco();
+    hint(msg || '');
+    if (preview) play(i * D + 0.001, { until: (i + 1) * D - 0.04 });
+  }
+  function tapStamp(k) {
+    const p = state.photos[currentIndex()];
+    if (!p) return;
+    const d = decoOf(p);
+    if (d.stamp === k) {
+      const pos = POS[(POS.indexOf(d.pos) + 1) % POS.length];
+      editDeco((dd) => { dd.pos = pos; }, `${POS_NAME[pos]}に動かしました`);
+    } else {
+      const first = !d.stamp;
+      editDeco((dd) => { dd.stamp = k; if (first) dd.pos = 'br'; }, `${STAMP[k].name.replace(/！$/, '')}を${POS_NAME[first ? 'br' : d.pos]}に付けました`, true);
+    }
+  }
+  // タブの中の表示を、いまの写真に合わせる
+  function syncDeco() {
+    if (el.panel.hidden || el.panel.dataset.tab !== 'deco') return;
+    const n = state.photos.length, i = currentIndex(), p = state.photos[i];
+    if (!p) return;
+    const d = decoOf(p);
+    setText($('deco-which'), `${i + 1}/${n}枚目の写真に付けます`);
+    $('deco-prev').disabled = i === 0 || state.exporting;
+    $('deco-next').disabled = i >= n - 1 || state.exporting;
+    for (const b of stampBtns) b.setAttribute('aria-pressed', String(d.stamp === b.dataset.k));
+    stampOff.setAttribute('aria-pressed', String(!d.stamp));
+    setText($('stamp-hint'), d.stamp ? `いまは${POS_NAME[d.pos]}。同じスタンプをもう一度押すと、場所が変わります` : '押すと、この写真に付きます');
+    for (const b of moveBtns) b.setAttribute('aria-pressed', String(d.move === b.dataset.k));
+    if (document.activeElement !== $('say')) $('say').value = d.say;
+    $('say-clear').hidden = !d.say;
+    for (const b of $('say-ideas').children) b.classList.toggle('on', d.say === b.dataset.w);
+    const any = state.photos.some(hasDeco);
+    $('deco-off').hidden = !any && !lastStrip;
+    setText($('deco-off'), lastStrip && !any ? '外したかざりを元に戻す' : 'かざりを全部外す');
+    for (const b of el.panel.querySelectorAll('.stamp, #moves .chip, #say-ideas .idea, #deco-auto, #say')) b.disabled = state.exporting || state.loading;
+    if (!state.playing) paintSwatches();
+  }
+  $('deco-prev').addEventListener('click', () => { jumpTo(currentIndex() - 1); syncDeco(); });
+  $('deco-next').addEventListener('click', () => { jumpTo(currentIndex() + 1); syncDeco(); });
+  const sayBox = $('say');
+  sayBox.addEventListener('input', () => {
+    const p = state.photos[currentIndex()];
+    if (!p || state.exporting) return;
+    if (state.playing) stop();
+    invalidate();
+    decoOf(p).say = cleanText(sayBox.value).slice(0, 16);
+    state.pos = currentIndex() * settings().dur + 0.02;
+    draw(state.pos);
+    $('say-clear').hidden = !sayBox.value;
+    for (const b of $('say-ideas').children) b.classList.toggle('on', decoOf(p).say === b.dataset.w);
+    updateButtons();
+  });
+  sayBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') sayBox.blur(); });
+  sayBox.addEventListener('change', () => { if (sayBox.value) editDeco(() => {}, '', true); });
+  $('say-clear').addEventListener('click', () => { sayBox.value = ''; editDeco((d) => { d.say = ''; }, 'ひとことを消しました'); });
+
+  // おまかせ：写真の雰囲気から、3枚に1枚くらいにスタンプ、1枚に動くかざりを付ける
+  function autoDeco() {
+    if (state.exporting || state.loading || !state.photos.length) return;
+    let count = 0;
+    const ps = state.photos;
+    const pickFor = (p) => {
+      const { L, S, W } = p.stats;
+      const set = L < 0.3 ? ['kira', 'star', 'note', 'crown'] : W > 0.08 ? ['heart', 'flower', 'smile', 'thanks'] : S > 0.35 && L > 0.45 ? ['laugh', 'star', 'best', 'kira'] : ['smile', 'note', 'flower', 'wow'];
+      return set[Math.floor(hash01(p.id * 7 + 1) * set.length)];
+    };
+    ps.forEach((p, i) => {
+      if (hasDeco(p) || (ps.length >= 2 && i % 3 !== 1)) return;
+      const d = decoOf(p);
+      d.stamp = pickFor(p);
+      d.pos = POS[Math.floor(hash01(p.id * 3) * 2)]; // 下の左右（顔にかぶりにくい）
+      count++;
+    });
+    // いちばん明るく色の濃い1枚には、動くかざりも
+    const best = ps.reduce((a, p) => (!a || p.stats.S + p.stats.L > a.stats.S + a.stats.L ? p : a), null);
+    if (best && decoOf(best).move === 'none') { if (!hasDeco(best)) count++; decoOf(best).move = best.stats.W > 0.06 ? 'hearts' : best.stats.L < 0.35 ? 'kira' : 'petals'; }
+    lastStrip = null;
+    syncDeco();
+    hint(`${Math.max(1, count)}枚にかざりを付けました。気に入らなければ「全部外す」で戻せます`);
+    stop(); invalidate(); state.pos = 0; refresh(); play(0);
+  }
+  $('deco-auto').addEventListener('click', autoDeco);
+  $('deco-off').addEventListener('click', () => {
+    if (state.exporting) return;
+    stop(); invalidate();
+    if (state.photos.some(hasDeco)) {
+      lastStrip = state.photos.map((p) => [p, p.deco ? { ...p.deco } : null]);
+      for (const p of state.photos) p.deco = null;
+      hint('かざりを全部外しました');
+    } else if (lastStrip) {
+      for (const [p, d] of lastStrip) if (d) p.deco = d;
+      lastStrip = null;
+      hint('かざりを元に戻しました');
+    }
+    refresh(); syncDeco();
+  });
 
   el.play.addEventListener('click', toggle);
   el.bigPlay.addEventListener('click', toggle);

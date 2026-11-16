@@ -104,6 +104,7 @@
       <div class="sheet-head">
         <div class="tabs" role="tablist" aria-label="編集する項目">
           <button class="tab" type="button" role="tab" data-tab="track" aria-selected="true">曲</button>
+          <button class="tab" type="button" role="tab" data-tab="deco" aria-selected="false">かざり</button>
           <button class="tab" type="button" role="tab" data-tab="title" aria-selected="false">タイトル</button>
           <button class="tab" type="button" role="tab" data-tab="photos" aria-selected="false">写真</button>
           <button class="tab" type="button" role="tab" data-tab="shape" aria-selected="false">形・速さ</button>
@@ -118,6 +119,41 @@
           <button type="button" class="chip" data-value="night">夜</button>
           <button type="button" class="chip" data-value="none">曲なし</button>
         </div>
+      </div>
+      <div class="group" data-tab="deco" role="group" aria-labelledby="g-look">
+        <p id="g-look" class="group-name">色あい<span class="group-sub">（動画ぜんたい）</span></p>
+        <div class="chips looks" data-group="filter">
+          <button type="button" class="chip look" data-value="none"><canvas class="swatch" width="96" height="64" aria-hidden="true"></canvas>そのまま</button>
+          <button type="button" class="chip look" data-value="soft"><canvas class="swatch" width="96" height="64" aria-hidden="true"></canvas>ふんわり</button>
+          <button type="button" class="chip look" data-value="film"><canvas class="swatch" width="96" height="64" aria-hidden="true"></canvas>フィルム</button>
+          <button type="button" class="chip look" data-value="memory"><canvas class="swatch" width="96" height="64" aria-hidden="true"></canvas>思い出</button>
+          <button type="button" class="chip look" data-value="mono"><canvas class="swatch" width="96" height="64" aria-hidden="true"></canvas>白黒</button>
+          <button type="button" class="chip look" data-value="summer"><canvas class="swatch" width="96" height="64" aria-hidden="true"></canvas>夏</button>
+        </div>
+      </div>
+      <div class="group" data-tab="deco">
+        <div class="deco-all">
+          <button id="deco-auto" class="btn line" type="button">おまかせでかざる</button>
+          <button id="deco-off" class="link" type="button" hidden>かざりを全部外す</button>
+        </div>
+      </div>
+      <div class="group" data-tab="deco" role="group" aria-labelledby="deco-which">
+        <div class="deco-nav">
+          <button id="deco-prev" class="step" type="button" aria-label="前の写真">◀</button>
+          <p id="deco-which" class="deco-which" aria-live="polite"></p>
+          <button id="deco-next" class="step" type="button" aria-label="次の写真">▶</button>
+        </div>
+        <p class="group-name">スタンプ</p>
+        <div id="stamps" class="stamps"></div>
+        <p id="stamp-hint" class="group-hint">同じスタンプをもう一度押すと、場所が変わります</p>
+        <p class="group-name sub">動くかざり</p>
+        <div id="moves" class="chips"></div>
+        <label class="group-name sub" for="say">ひとこと</label>
+        <div class="field-row">
+          <input id="say" class="text" type="text" maxlength="16" placeholder="例：また行こう！" autocomplete="off" enterkeyhint="done">
+          <button id="say-clear" class="link" type="button" hidden>消す</button>
+        </div>
+        <div id="say-ideas" class="chips ideas" aria-label="ひとことの候補"></div>
       </div>
       <div class="group" data-tab="title">
         <label class="group-name" for="title">タイトル</label>
