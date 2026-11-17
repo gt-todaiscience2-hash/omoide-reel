@@ -15,10 +15,11 @@
     maxSourcePixels: 100e6
   });
   const TRACKS = Object.freeze({
-    sunny: { file: 'audio/sunny-steps.mp3', name: 'Sunny Steps', mood: '明るく色あざやか', tint: '#f2a33a' },
-    golden: { file: 'audio/golden-hour.mp3', name: 'Golden Hour', mood: 'あたたかい色合い', tint: '#d9764a' },
-    breeze: { file: 'audio/blue-breeze.mp3', name: 'Blue Breeze', mood: 'すっきり爽やか', tint: '#4a93b8' },
-    night: { file: 'audio/night-lights.mp3', name: 'Night Lights', mood: '夜・しっとり', tint: '#5a5a9c' }
+    // bpm：曲の速さ（1分あたりの拍の数）。写真の切りかわりを拍にそろえるのに使う（tools/make-bgm.py と同じ値）
+    sunny: { file: 'audio/sunny-steps.mp3', name: 'Sunny Steps', mood: '明るく色あざやか', tint: '#f2a33a', bpm: 116 },
+    golden: { file: 'audio/golden-hour.mp3', name: 'Golden Hour', mood: 'あたたかい色合い', tint: '#d9764a', bpm: 84 },
+    breeze: { file: 'audio/blue-breeze.mp3', name: 'Blue Breeze', mood: 'すっきり爽やか', tint: '#4a93b8', bpm: 66 },
+    night: { file: 'audio/night-lights.mp3', name: 'Night Lights', mood: '夜・しっとり', tint: '#5a5a9c', bpm: 76 }
   });
   const SIZES = Object.freeze({ landscape: [1920, 1080], portrait: [1080, 1920], square: [1080, 1080] }); // フルHD
   // 端末の力が足りず動きがカクつくときに使う、ひとまわり小さいサイズ
@@ -83,7 +84,7 @@
   // ---------- ふりがな（小さい子向け。右上のボタンか、URLの ?kana=1 で入る） ----------
   // 画面に出す言葉はこの表の漢字だけで書く。長いことばを先に当てる
   const KANA = [
-    ['一時停止', 'いちじていし'], ['作り直', 'つくりなお'], ['作成', 'さくせい'], ['消音', 'しょうおん'], ['形式', 'けいしき'], ['色合い', 'いろあい'], ['解除', 'かいじょ'], ['移動', 'いどう'],
+    ['一時停止', 'いちじていし'], ['好き', 'すき'], ['便利', 'べんり'], ['載せ', 'のせ'], ['作り直', 'つくりなお'], ['作成', 'さくせい'], ['消音', 'しょうおん'], ['形式', 'けいしき'], ['色合い', 'いろあい'], ['解除', 'かいじょ'], ['移動', 'いどう'],
     ['停止', 'ていし'], ['文字', 'もじ'], ['候補', 'こうほ'], ['明るく', 'あかるく'], ['爽やか', 'さわやか'], ['待ち', 'まち'], ['行こう', 'いこう'], ['気に入', 'きにい'],
     ['有効', 'ゆうこう'], ['空の', 'からの'], ['後ろ', 'うしろ'], ['使い方', 'つかいかた'], ['位置', 'いち'], ['項目', 'こうもく'], ['種類', 'しゅるい'], ['前', 'まえ'], ['内', 'ない'], ['思い出', 'おもいで'], ['色あい', 'いろあい'], ['白黒', 'しろくろ'], ['王冠', 'おうかん'], ['音符', 'おんぷ'], ['最高', 'さいこう'], ['場所', 'ばしょ'], ['同じ', 'おなじ'],
     ['動く', 'うごく'], ['動き', 'うごき'], ['付け', 'つけ'], ['付き', 'つき'], ['星', 'ほし'], ['花', 'はな'], ['夏', 'なつ'], ['色', 'いろ'], ['右下', 'みぎした'], ['左下', 'ひだりした'], ['左上', 'ひだりうえ'], ['右上', 'みぎうえ'],
@@ -157,11 +158,12 @@
   const cleanText = (s) => String(s).replace(/[\u0000-\u001f\u007f​-‏‪-‮⁦-⁩]/g, '').trim().slice(0, 40);
   const shortName = (name) => { const n = cleanText(name); return n.length > 28 ? n.slice(0, 25) + '…' : n; };
 
-  // おまかせのかたち：たて向きの写真が多ければ、たて長にする
+  // おまかせのかたち：たて向きの写真が半分以上なら、たて長にする（スマホをたてに持ったまま見る人が多いため）。
+  // たて長の動画に入る横長の写真は、左右を切らずに全体を映す（drawSlide）ので、集合写真でも顔が切れない
   function autoShape() {
     const n = state.photos.length;
     const tall = state.photos.filter((p) => p.h > p.w * 1.1).length;
-    return n && tall / n > 0.6 ? 'portrait' : 'landscape';
+    return n && tall / n >= 0.5 ? 'portrait' : 'landscape';
   }
   // 下のお知らせ欄。読み終わるころ（7秒）に自動で消して、古い情報を残さない
   let hintTimer = 0;
@@ -178,7 +180,17 @@
     const dur = d === 2.5 || d === 3.5 || d === 5 ? d : Math.round(clamp(50 / Math.max(1, n), 2, 3.5) * 10) / 10;
     const pick = choice.track;
     const track = pick === 'none' ? null : (Object.hasOwn(TRACKS, pick) ? pick : state.autoTrack);
-    return { size: (state.light ? SIZES_LIGHT : SIZES)[shape], dur, track, title: cleanText(el.title.value), subtitle: '' };
+    return { size: (state.light ? SIZES_LIGHT : SIZES)[shape], dur: onBeat(dur, track), track, title: cleanText(el.title.value), subtitle: '' };
+  }
+  // 写真の切りかわりを曲の拍にそろえる（3秒→3.1秒のように、いちばん近い拍の切れ目へ）。見た目の速さはほぼ変わらない
+  function onBeat(dur, track) {
+    const t = track && TRACKS[track];
+    if (!t || !t.bpm) return dur;
+    const beat = 60 / t.bpm;
+    const unit = beat > 0.6 ? beat / 2 : beat; // ゆっくりの曲は半拍ごと（ずれ幅を小さくする）
+    let n = Math.max(1, Math.round(dur / unit));
+    if (n * unit < Math.min(dur, 2) - 0.05) n++; // 1枚2秒より短くはしない
+    return Math.round(n * unit * 1000) / 1000;
   }
   const totalTime = () => Math.max(1, state.photos.length) * settings().dur;
   const within = (promise, ms) => Promise.race([promise, new Promise((r) => setTimeout(r, ms))]);
@@ -1089,13 +1101,16 @@
     const sw = src.width, sh = src.height;
     const ar = photo.w / photo.h, far = W / H;
     const loss = 1 - Math.min(ar, far) / Math.max(ar, far);
+    // 写真が画面より大きく横長（たて長の動画に横長の集合写真など）だと、左右の人の顔が切れる。
+    // そういう写真だけは自動で全体を映し、まわりをぼかした同じ写真でうめる
+    const sideCut = ar > far && loss >= 0.42;
     const q = ease(clamp(p, 0, 1));
     const zin = i % 2 === 0;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    if (loss >= 0.3 && choice.fit !== 'whole') {
+    if (loss >= 0.3 && choice.fit !== 'whole' && !sideCut) {
       // 形が合わない写真：切れる方向へゆっくり流して見せる（iPhoneのスライドショーと同じ考え方）。
       // 画面いっぱいに映るので、ぼかし背景よりくっきり見える
       const k = Math.max(W / sw, H / sh) * 1.03;
@@ -1108,7 +1123,7 @@
       const pp = clamp(p, 0, 1);
       const pos = start + travel * (zin ? pp : 1 - pp);
       ctx.drawImage(src, vertical ? -ow / 2 : -pos, vertical ? -pos : -oh / 2, sw * k, sh * k);
-    } else if (loss < 0.3) {
+    } else if (loss < 0.3 && !sideCut) {
       // 画面いっぱい＋ゆっくりズームとパン
       const z = 1.06 + 0.08 * (zin ? q : 1 - q);
       const ang = i * 2.399;
@@ -1805,7 +1820,7 @@
     const a = document.createElement('a');
     a.href = lastDownloadUrl; a.download = name;
     a.click();
-    hint(viaPhone ? '端末に保存しました' : '動画を保存しました。LINEの画面にドラッグすると送れます');
+    hint(viaPhone ? '保存しました。インスタやTikTokでは、写真の一覧から選べます' : '動画を保存しました。LINEの画面にドラッグすると送れます');
   }
 
   function closeResult() {
@@ -2051,7 +2066,7 @@
       buzz(8);
       if (group === 'filter') { applyLook(); return; }
       rearranged();
-      if (group === 'track' && c.dataset.value === 'none') hint('音のない動画になります');
+      if (group === 'track' && c.dataset.value === 'none') hint('音のない動画になります。インスタやTikTokで好きな曲を付けるときに便利です');
     });
   }
   el.title.addEventListener('input', () => {
@@ -2332,7 +2347,20 @@
     if (files.length && !(e.target && e.target.tagName === 'INPUT')) { e.preventDefault(); addFiles(files); }
   });
   el.send.addEventListener('click', send);
-  $('keep').addEventListener('click', () => { if (state.ready) download(state.ready.blob, state.ready.name, true); });
+  // インスタ・TikTokなどに載せたい人向け。iPhoneは「ダウンロード」だと写真アプリに入らないので、共有画面から「ビデオを保存」してもらう
+  $('keep').addEventListener('click', async () => {
+    const r = state.ready;
+    if (!r) return;
+    if (IS_IOS) {
+      const file = makeFile(r.blob, r.name);
+      if (canShareFile(file)) {
+        try { await navigator.share({ files: [file] }); } catch (_) {}
+        hint('「ビデオを保存」で写真アプリに入ります。インスタやTikTokでは、そこから選べます');
+        return;
+      }
+    }
+    download(r.blob, r.name, true);
+  });
   el.recCancel.addEventListener('click', () => cancelWait());
   el.poster.addEventListener('click', makePoster);
   el.share.addEventListener('click', share);
