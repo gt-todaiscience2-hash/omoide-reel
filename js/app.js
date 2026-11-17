@@ -83,7 +83,7 @@
   // ---------- ふりがな（小さい子向け。右上のボタンか、URLの ?kana=1 で入る） ----------
   // 画面に出す言葉はこの表の漢字だけで書く。長いことばを先に当てる
   const KANA = [
-    ['思い出', 'おもいで'], ['色あい', 'いろあい'], ['白黒', 'しろくろ'], ['王冠', 'おうかん'], ['音符', 'おんぷ'], ['最高', 'さいこう'], ['場所', 'ばしょ'], ['同じ', 'おなじ'],
+    ['一時停止', 'いちじていし'], ['思い出', 'おもいで'], ['色あい', 'いろあい'], ['白黒', 'しろくろ'], ['王冠', 'おうかん'], ['音符', 'おんぷ'], ['最高', 'さいこう'], ['場所', 'ばしょ'], ['同じ', 'おなじ'],
     ['動く', 'うごく'], ['動き', 'うごき'], ['付け', 'つけ'], ['付き', 'つき'], ['星', 'ほし'], ['花', 'はな'], ['夏', 'なつ'], ['色', 'いろ'], ['右下', 'みぎした'], ['左下', 'ひだりした'], ['左上', 'ひだりうえ'], ['右上', 'みぎうえ'],
     ['修学旅行', 'しゅうがくりょこう'], ['並べ替え', 'ならべかえ'], ['送り先', 'おくりさき'], ['場面', 'ばめん'], ['編集', 'へんしゅう'], ['見せ方', 'みせかた'], ['表紙', 'ひょうし'], ['余白', 'よはく'], ['右端', 'みぎはし'], ['仕上', 'しあ'], ['送れ', 'おくれ'], ['映', 'うつ'], ['他', 'た'], ['先', 'さき'], ['中', 'なか'], ['乗', 'の'], ['一覧', 'いちらん'], ['動か', 'うごか'], ['全体', 'ぜんたい'], ['合', 'あ'], ['読み込み中', 'よみこみちゅう'], ['正方形', 'せいほうけい'], ['文化祭', 'ぶんかさい'], ['体育祭', 'たいいくさい'],
     ['誕生日', 'たんじょうび'], ['準備中', 'じゅんびちゅう'], ['読み込', 'よみこ'], ['受け取', 'うけと'], ['何枚', 'なんまい'], ['写真', 'しゃしん'], ['動画', 'どうが'],
@@ -1344,17 +1344,21 @@
 
   // 再生中・動画の作成中に画面が暗くなって中断されないようにする（対応端末のみ）
   let wake = null;
+  let wakeOk = !!navigator.wakeLock; // 使えないとわかったら、作っているあいだ「画面を消さないで」と案内する
   async function keepAwake(on) {
     try {
       if (on) {
-        if (!wake && navigator.wakeLock) {
+        if (!wake && navigator.wakeLock && !document.hidden) {
           wake = await navigator.wakeLock.request('screen');
+          wakeOk = true;
           wake.addEventListener('release', () => { wake = null; });
         }
       } else if (wake) { const w = wake; wake = null; await w.release(); }
-    } catch (_) { wake = null; }
+    } catch (_) {
+      wake = null;
+      if (on && !document.hidden) wakeOk = false;
+    }
   }
-
   const meter = { t0: 0, n: 0, done: false };
   function tick() {
     if (!state.playing) return;
@@ -1539,7 +1543,8 @@
     } else if (st === 'preparing') {
       el.send.style.setProperty('--p', String(clamp(t / T, 0, 1)));
       label = rec.paused ? '続きから作る' : '動画を作っています';
-      sub = `あと${left}秒`;
+      // 画面ロック対策が使えない端末では、作っているあいだだけ「画面を消さないで」と添える
+      sub = !rec.paused && !wakeOk ? `あと${left}秒・画面を消さないでください` : `あと${left}秒`;
     } else {
       label = `動画を作る（${Math.ceil(T)}秒）`;
       sub = state.photos.length ? '押すと再生しながら仕上げます' : '';
@@ -2329,12 +2334,23 @@
   el.share.addEventListener('click', share);
   el.resultClose.addEventListener('click', closeResult);
 
+  // 画面が消えた・ほかのアプリに移ったとき：止めておき、作っている途中なら戻ったときに続きから自動で作る
+  let hiddenPause = false;
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
-      if (state.exporting && rec.paused && !state.playing) play(state.pos); // 待っている途中だったら、つづきから
+      const resume = (hiddenPause || state.exporting) && rec.active && rec.paused && !state.playing;
+      hiddenPause = false;
+      if (resume) {
+        hint('画面が消えたので一時停止しました。続きから作っています');
+        play(state.pos);
+      }
       return;
     }
-    if (state.playing) { pause(); if (!state.exporting) hint('止めました。▶ を押すと続きから見られます'); }
+    if (state.playing) {
+      hiddenPause = rec.active && !rec.finishing;
+      pause();
+      if (!state.exporting) hint(hiddenPause ? '一時停止しました。この画面に戻ると、続きから作ります' : '止めました。▶ を押すと続きから見られます');
+    }
   });
   document.addEventListener('keydown', (e) => {
     if ((e.code === 'ArrowLeft' || e.code === 'ArrowRight') && !['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target && e.target.tagName) && state.photos.length) {
