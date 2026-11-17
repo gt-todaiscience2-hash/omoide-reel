@@ -83,7 +83,9 @@
   // ---------- ふりがな（小さい子向け。右上のボタンか、URLの ?kana=1 で入る） ----------
   // 画面に出す言葉はこの表の漢字だけで書く。長いことばを先に当てる
   const KANA = [
-    ['一時停止', 'いちじていし'], ['思い出', 'おもいで'], ['色あい', 'いろあい'], ['白黒', 'しろくろ'], ['王冠', 'おうかん'], ['音符', 'おんぷ'], ['最高', 'さいこう'], ['場所', 'ばしょ'], ['同じ', 'おなじ'],
+    ['一時停止', 'いちじていし'], ['作り直', 'つくりなお'], ['作成', 'さくせい'], ['消音', 'しょうおん'], ['形式', 'けいしき'], ['色合い', 'いろあい'], ['解除', 'かいじょ'], ['移動', 'いどう'],
+    ['停止', 'ていし'], ['文字', 'もじ'], ['候補', 'こうほ'], ['明るく', 'あかるく'], ['爽やか', 'さわやか'], ['待ち', 'まち'], ['行こう', 'いこう'], ['気に入', 'きにい'],
+    ['有効', 'ゆうこう'], ['空の', 'からの'], ['後ろ', 'うしろ'], ['使い方', 'つかいかた'], ['位置', 'いち'], ['項目', 'こうもく'], ['種類', 'しゅるい'], ['前', 'まえ'], ['内', 'ない'], ['思い出', 'おもいで'], ['色あい', 'いろあい'], ['白黒', 'しろくろ'], ['王冠', 'おうかん'], ['音符', 'おんぷ'], ['最高', 'さいこう'], ['場所', 'ばしょ'], ['同じ', 'おなじ'],
     ['動く', 'うごく'], ['動き', 'うごき'], ['付け', 'つけ'], ['付き', 'つき'], ['星', 'ほし'], ['花', 'はな'], ['夏', 'なつ'], ['色', 'いろ'], ['右下', 'みぎした'], ['左下', 'ひだりした'], ['左上', 'ひだりうえ'], ['右上', 'みぎうえ'],
     ['修学旅行', 'しゅうがくりょこう'], ['並べ替え', 'ならべかえ'], ['送り先', 'おくりさき'], ['場面', 'ばめん'], ['編集', 'へんしゅう'], ['見せ方', 'みせかた'], ['表紙', 'ひょうし'], ['余白', 'よはく'], ['右端', 'みぎはし'], ['仕上', 'しあ'], ['送れ', 'おくれ'], ['映', 'うつ'], ['他', 'た'], ['先', 'さき'], ['中', 'なか'], ['乗', 'の'], ['一覧', 'いちらん'], ['動か', 'うごか'], ['全体', 'ぜんたい'], ['合', 'あ'], ['読み込み中', 'よみこみちゅう'], ['正方形', 'せいほうけい'], ['文化祭', 'ぶんかさい'], ['体育祭', 'たいいくさい'],
     ['誕生日', 'たんじょうび'], ['準備中', 'じゅんびちゅう'], ['読み込', 'よみこ'], ['受け取', 'うけと'], ['何枚', 'なんまい'], ['写真', 'しゃしん'], ['動画', 'どうが'],
@@ -1601,7 +1603,9 @@
       r.onerror = () => { if (r === rec.recorder) abortRecording(); };
       r.onstop = () => { if (r === rec.recorder) onRecorderStop(); };
       rec.recorder = r;
-      r.start(1000);
+      // 1秒ごとに区切って受け取らず、終わったときにまとめて受け取る
+      // （iPhoneのSafariには、一時停止中も同じデータが届き続けて動画が壊れる不具合があるため）
+      r.start();
       rec.active = true;
       return true;
     } catch (_) {
@@ -1993,7 +1997,7 @@
     document.body.classList.toggle('editing', open);
     el.adjust.setAttribute('aria-expanded', String(open));
     syncEditButton();
-    el.bigPlay.hidden = state.playing || !state.photos.length || open;
+    el.bigPlay.hidden = state.playing || !state.photos.length || state.exporting || open;
     if (open) { closeResult(); showNowInList(); syncDeco(); paintSwatches(); }
     layout();
   }
@@ -2334,22 +2338,26 @@
   el.share.addEventListener('click', share);
   el.resultClose.addEventListener('click', closeResult);
 
-  // 画面が消えた・ほかのアプリに移ったとき：止めておき、作っている途中なら戻ったときに続きから自動で作る
+  // 画面が消えた・ほかのアプリに移ったとき：止めておき、作っている途中なら戻ったときに最初から作り直す
+  // （画面が消えると音の処理もいったん切られるため、続きから録ると音ずれ・破損の恐れがある。壊れた動画を送るよりやり直す）
   let hiddenPause = false;
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
-      const resume = (hiddenPause || state.exporting) && rec.active && rec.paused && !state.playing;
+      const redo = (hiddenPause || state.exporting) && rec.active && rec.paused && !state.playing;
       hiddenPause = false;
-      if (resume) {
-        hint('画面が消えたので一時停止しました。続きから作っています');
-        play(state.pos);
+      if (redo) {
+        abortRecording();
+        invalidate();
+        state.pos = 0; refresh();
+        hint('画面が消えたので、最初から作り直しています');
+        play(0);
       }
       return;
     }
     if (state.playing) {
       hiddenPause = rec.active && !rec.finishing;
       pause();
-      if (!state.exporting) hint(hiddenPause ? '一時停止しました。この画面に戻ると、続きから作ります' : '止めました。▶ を押すと続きから見られます');
+      if (!state.exporting) hint(hiddenPause ? '一時停止しました。この画面に戻ると、最初から作り直します' : '止めました。▶ を押すと続きから見られます');
     }
   });
   document.addEventListener('keydown', (e) => {
