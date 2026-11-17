@@ -565,3 +565,35 @@ body:has(main[data-mode="start"]) {
 #moves { margin-bottom: 4px; }
 .deco-all { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .deco-all .btn { flex: 1 1 auto; }
+
+/* かざりタブの中の切りかえ。上にくっついたまま、どの写真に付けるかも一緒に見える */
+#panel[data-tab="deco"] .group[data-seg] { display: none; }
+#panel[data-tab="deco"][data-seg="stamp"] .group[data-seg="stamp"],
+#panel[data-tab="deco"][data-seg="move"] .group[data-seg="move"],
+#panel[data-tab="deco"][data-seg="say"] .group[data-seg="say"],
+#panel[data-tab="deco"][data-seg="look"] .group[data-seg="look"] { display: block; }
+#panel[data-seg="look"] .deco-nav { display: none; }
+#panel .group.seg-wrap { padding-bottom: 8px; }
+.seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; margin: 0 0 8px; border-radius: 14px; background: var(--ground); }
+.seg-btn { position: relative; min-height: 44px; padding: 0 4px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2); font: inherit; font-size: 0.875rem; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.seg-btn[aria-selected="true"] { background: var(--paper); color: var(--ink); box-shadow: 0 1px 4px rgba(20, 30, 50, .14); }
+.seg-btn.has::after { content: ""; position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--go); }
+.seg-btn:active { transform: scale(.96); }
+.deco-nav { margin: 0; }
+.deco-all { margin-top: 12px; }
+#moves { margin-bottom: 0; }
+
+/* 高さの低いスマホ（iPhone SE など）で編集しているとき：
+   上の帯と送るボタンをいったん隠して、編集の欄を広くする（閉じればもとに戻る） */
+@media (max-height: 700px) and (orientation: portrait) {
+  body.editing .bar, body.editing .hint-row, body.editing #send, body.editing #share-hint { display: none; }
+  body.editing .view { flex: 0 0 max(176px, 31svh); min-height: 0; }
+  body.editing #panel { flex: 1 1 auto; max-height: none; min-height: 0; }
+  body.editing .sheet-head { padding-top: 8px; padding-bottom: 4px; }
+  body.editing .dock { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+  /* スタンプは2段の横スクロールにして、縦の長さをおさえる */
+  .stamps { grid-auto-flow: column; grid-template-columns: none; grid-template-rows: repeat(2, 56px); grid-auto-columns: 58px; overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 6px; scrollbar-width: thin; }
+  .stamp { min-height: 0; }
+  .stamp canvas { max-height: 46px; width: auto !important; }
+  .stamp.wide canvas { max-height: 40px; }
+}

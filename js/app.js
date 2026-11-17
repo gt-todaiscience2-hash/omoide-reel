@@ -773,7 +773,7 @@
   ];
   const STAMP = Object.fromEntries(STAMPS.map((s) => [s.k, s]));
   for (const s of STAMPS) if (s.text) { s.w = 34 + 34 * s.text.length; s.h = 58; }
-  const POS = ['br', 'bl', 'tl', 'tr'];
+  const POS = ['bl', 'br', 'tr', 'tl']; // 最初は左下（右下は画面の音ボタンと重なるため）
   const POS_NAME = { br: '右下', bl: '左下', tl: '左上', tr: '右上' };
   const MOVES = [{ k: 'none', name: 'なし' }, { k: 'hearts', name: 'ハート' }, { k: 'kira', name: 'キラキラ' }, { k: 'petals', name: '花びら' }];
   // 毎回同じ値になる乱数（再生と録画で動きがずれないように）
@@ -785,7 +785,7 @@
     return (t >>> 0) / 4294967296;
   }
   const backOut = (u) => { const c1 = 1.5, c3 = c1 + 1; return 1 + c3 * Math.pow(u - 1, 3) + c1 * Math.pow(u - 1, 2); };
-  const decoOf = (p) => p.deco || (p.deco = { stamp: null, pos: 'br', move: 'none', say: '' });
+  const decoOf = (p) => p.deco || (p.deco = { stamp: null, pos: 'bl', move: 'none', say: '' });
   const hasDeco = (p) => !!(p.deco && (p.deco.stamp || p.deco.move !== 'none' || p.deco.say));
 
   // 白いふちどり＋うすい影（シール風）。u は 1単位あたりのピクセル数
@@ -1453,7 +1453,7 @@
     const [W, H] = settings().size;
     const aw = el.view.clientWidth;
     let ah = el.view.clientHeight - el.view.querySelector('.controls').offsetHeight;
-    if (ah < 90) ah = window.innerHeight * 0.6; // 背の低い画面（横向きなど）
+    if (ah < 90) ah = document.body.classList.contains('editing') && window.innerHeight > window.innerWidth ? Math.max(ah, 60) : window.innerHeight * 0.6; // 背の低い画面（横向きなど）
     const k = Math.min(aw / W, ah / H);
     // 動画を小さくせずに置ける空きがあるときだけ、写真の帯を出す
     const stripH = window.innerWidth >= 600 && window.innerHeight >= 600 ? 80 : 64;
@@ -1985,10 +1985,11 @@
 
   function setPanel(open) {
     el.panel.hidden = !open;
+    document.body.classList.toggle('editing', open);
     el.adjust.setAttribute('aria-expanded', String(open));
     syncEditButton();
     el.bigPlay.hidden = state.playing || !state.photos.length || open;
-    if (open) { closeResult(); showNowInList(); syncDeco(); }
+    if (open) { closeResult(); showNowInList(); syncDeco(); paintSwatches(); }
     layout();
   }
   // 編集ボタン：何が変えられるか（いまの曲）を小さく出す
@@ -2009,7 +2010,7 @@
     for (const t of el.panel.querySelectorAll('.tab')) t.setAttribute('aria-selected', String(t.dataset.tab === name));
     el.panel.scrollTop = 0;
     if (name === 'photos') showNowInList();
-    if (name === 'deco') syncDeco();
+    if (name === 'deco') { syncDeco(); paintSwatches(); }
   }
   for (const t of el.panel.querySelectorAll('.tab')) t.addEventListener('click', () => setTab(t.dataset.tab));
   el.adjust.addEventListener('click', () => setPanel(el.panel.hidden));
@@ -2094,7 +2095,7 @@
   }
   // 色あいの見本：いま映っている写真で、それぞれの色あいを小さく見せる
   function paintSwatches() {
-    if (el.panel.hidden || el.panel.dataset.tab !== 'deco') return;
+    if (el.panel.hidden || el.panel.dataset.tab !== 'deco' || el.panel.dataset.seg !== 'look') return;
     const p = state.photos[currentIndex()];
     if (!p) return;
     if (!p.thumb0) syncThumb(p);
@@ -2176,16 +2177,20 @@
       editDeco((dd) => { dd.pos = pos; }, `${POS_NAME[pos]}に動かしました`);
     } else {
       const first = !d.stamp;
-      editDeco((dd) => { dd.stamp = k; if (first) dd.pos = 'br'; }, `${STAMP[k].name.replace(/！$/, '')}を${POS_NAME[first ? 'br' : d.pos]}に付けました`, true);
+      editDeco((dd) => { dd.stamp = k; if (first) dd.pos = POS[0]; }, `${STAMP[k].name.replace(/！$/, '')}を${POS_NAME[first ? POS[0] : d.pos]}に付けました`, true);
     }
   }
+  const segBtns = Array.from(el.panel.querySelectorAll('.seg-btn'));
   // タブの中の表示を、いまの写真に合わせる
   function syncDeco() {
     if (el.panel.hidden || el.panel.dataset.tab !== 'deco') return;
     const n = state.photos.length, i = currentIndex(), p = state.photos[i];
     if (!p) return;
     const d = decoOf(p);
-    setText($('deco-which'), `${i + 1}/${n}枚目の写真に付けます`);
+    setText($('deco-which'), `${i + 1}/${n}枚目に付けます`);
+    // 付いているものには、切りかえボタンに印を出す
+    const has = { stamp: !!d.stamp, move: d.move !== 'none', say: !!d.say, look: choice.filter !== 'none' };
+    for (const b of segBtns) b.classList.toggle('has', has[b.dataset.seg]);
     $('deco-prev').disabled = i === 0 || state.exporting;
     $('deco-next').disabled = i >= n - 1 || state.exporting;
     for (const b of stampBtns) b.setAttribute('aria-pressed', String(d.stamp === b.dataset.k));
@@ -2201,6 +2206,15 @@
     for (const b of el.panel.querySelectorAll('.stamp, #moves .chip, #say-ideas .idea, #deco-auto, #say')) b.disabled = state.exporting || state.loading;
     if (!state.playing) paintSwatches();
   }
+  // かざりタブの中の切りかえ（スタンプ / 動き / ひとこと / 色あい）。小さい画面でもスクロールが少なくて済む
+  function setSeg(name) {
+    el.panel.dataset.seg = name;
+    for (const b of segBtns) b.setAttribute('aria-selected', String(b.dataset.seg === name));
+    el.panel.scrollTop = 0;
+    syncDeco();
+    paintSwatches(); // 再生中でも、開いたときに見本を描く
+  }
+  for (const b of segBtns) b.addEventListener('click', () => { buzz(6); setSeg(b.dataset.seg); });
   $('deco-prev').addEventListener('click', () => { jumpTo(currentIndex() - 1); syncDeco(); });
   $('deco-next').addEventListener('click', () => { jumpTo(currentIndex() + 1); syncDeco(); });
   const sayBox = $('say');
